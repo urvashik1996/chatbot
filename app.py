@@ -3,7 +3,7 @@ import logging
 from scraper import build_website_map, scrape_contact_info_fallback
 from nlp import extract_keywords_and_intent, scrape_targeted_content
 from database import init_db, get_contact_info, store_contact_info
-from thefuzz import fuzz, process  # Added fuzz import
+from thefuzz import fuzz, process
 
 app = Flask(__name__)
 
@@ -83,7 +83,7 @@ def scrape_page_endpoint():
 
     # Scrape the content immediately for the requested URL
     response = scrape_targeted_content(keywords, 'description', session_id, url, website_map, user_sessions)
-    return jsonify({'response': response})
+    return jsonify({'response': f"Here’s what I found about {keywords[0].capitalize()}:\n\n{response}"})
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -102,10 +102,10 @@ def chat():
     if any(keyword in user_message.lower() for keyword in ['contact', 'phone', 'email', 'address']):
         contact_text = get_contact_info()
         if contact_text:
-            return jsonify({'response': contact_text})
+            return jsonify({'response': f"Stolmeier Law Contact Information:\n{contact_text}"})
         contact_text = scrape_contact_info_fallback()
         store_contact_info(contact_text)
-        return jsonify({'response': contact_text})
+        return jsonify({'response': f"Stolmeier Law Contact Information:\n{contact_text}"})
 
     if user_message.lower() in ['yes', 'no']:
         feedback = user_message.lower()
@@ -136,7 +136,7 @@ def chat():
             all_sections.extend(list(website_map['practice areas']['subcategories'].keys()))
         for keyword in keywords:
             best_match = process.extractOne(keyword, all_sections, scorer=fuzz.token_sort_ratio)
-            if best_match and best_match[1] > 85:
+            if best_match and best_match[1] > 80:
                 matched_section = best_match[0]
                 if matched_section in website_map:
                     url = website_map[matched_section]['url']
@@ -150,7 +150,18 @@ def chat():
         return jsonify({'response': "Sorry, I couldn't find the requested section."})
 
     response = scrape_targeted_content(keywords, intent, session_id, url, website_map, user_sessions)
-    return jsonify({'response': response})
+    
+    # Format the response based on intent
+    if intent == 'causes':
+        formatted_response = f"Common Causes of {keywords[0].capitalize()}:\n{response}"
+    elif intent == 'about':
+        formatted_response = f"About {keywords[0].capitalize()}:\n\n{response}"
+    elif intent == 'contact':
+        formatted_response = f"Stolmeier Law Contact Information:\n{response}"
+    else:
+        formatted_response = f"Here’s what I found about {keywords[0].capitalize()}:\n\n{response}"
+
+    return jsonify({'response': formatted_response + "\n\nWas this helpful? (Reply 'yes' or 'no')"})
 
 if __name__ == '__main__':
     init_db()
