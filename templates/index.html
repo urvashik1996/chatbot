@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stolmeier Law Chatbot</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2>Stolmeier Law Chatbot</h2>
+            <button class="clear-btn" onclick="clearChat()" aria-label="Clear chat history">Clear Chat</button>
+        </div>
+        <div class="chat-box" id="chatBox"></div>
+        <div class="typing-indicator" id="typingIndicator" style="display: none;">
+            <span class="loading-text">Fetching content...</span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+        </div>
+        <div class="chat-input">
+            <input type="text" id="userInput" placeholder="Ask about Stolmeier Law..." onkeypress="handleKeyPress(event)" aria-label="Type your message">
+            <button onclick="sendMessage()" aria-label="Send message">Send</button>
+        </div>
+        <div class="quick-replies">
+            <button class="quick-reply-btn" onclick="sendQuickReply('Tell me about Practice Areas')" aria-label="Ask about Practice Areas">Practice Areas</button>
+            <button class="quick-reply-btn" onclick="sendQuickReply('What is the contact info?')" aria-label="Ask about Contact Info">Contact Info</button>
+            <button class="quick-reply-btn" onclick="sendQuickReply('Tell me about the firm')" aria-label="Ask about the Firm">About the Firm</button>
+        </div>
+    </div>
+
+    <script>
+        const chatBox = document.getElementById('chatBox');
+        const userInput = document.getElementById('userInput');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const sessionId = 'default';
+
+        function loadChatHistory() {
+            const history = JSON.parse(localStorage.getItem('chatHistory')) || [];
+            history.forEach(msg => displayMessage(msg.text, msg.sender, new Date(msg.timestamp)));
+        }
+
+        function saveMessage(text, sender) {
+            const history = JSON.parse(localStorage.getItem('chatHistory')) || [];
+            history.push({ text, sender, timestamp: new Date().toISOString() });
+            localStorage.setItem('chatHistory', JSON.stringify(history));
+        }
+
+        function clearChat() {
+            localStorage.removeItem('chatHistory');
+            chatBox.innerHTML = '';
+            loadWelcomeMessage();
+        }
+
+        function formatTimestamp(date) {
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function displayMessage(text, sender, date = new Date()) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message`;
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            messageContent.textContent = text;
+            const timestamp = document.createElement('div');
+            timestamp.className = 'timestamp';
+            timestamp.textContent = formatTimestamp(date);
+            messageDiv.appendChild(messageContent);
+            messageDiv.appendChild(timestamp);
+            chatBox.appendChild(messageDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            typingIndicator.style.display = 'flex';
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            typingIndicator.style.display = 'none';
+        }
+
+        function toggleDropdown(dropdown) {
+            if (dropdown.style.display === 'block') {
+                dropdown.style.display = 'none';
+            } else {
+                document.querySelectorAll('.dropdown').forEach(d => d.style.display = 'none');
+                dropdown.style.display = 'block';
+            }
+        }
+
+        async function loadWelcomeMessage() {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            try {
+                showTypingIndicator();
+                const response = await fetch('/welcome', {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                
+                hideTypingIndicator();
+                
+                displayMessage(data.message, 'bot');
+                saveMessage(data.message, 'bot');
+                
+                data.nav_items.forEach(item => {
+                    if (!item.url) {
+                        displayMessage(`${item.title} (No link available)`, 'bot');
+                        saveMessage(`${item.title} (No link available)`, 'bot');
+                        return;
+                    }
+
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'message bot-message';
+                    const itemLink = document.createElement('a');
+                    itemLink.textContent = item.title;
+                    itemLink.className = 'nav-link';
+                    itemLink.href = '#';
+                    itemLink.setAttribute('aria-expanded', 'false');
+                    itemLink.setAttribute('aria-haspopup', 'true');
+
+                    if (item.title.toLowerCase() === 'practice areas' && item.subcategories && item.subcategories.length > 0) {
+                        const dropdown = document.createElement('div');
+                        dropdown.className = 'dropdown';
+                        dropdown.style.display = 'none';
+
+                        item.subcategories.forEach(sub => {
+                            const subLink = document.createElement('a');
+                            subLink.textContent = sub.title;
+                            subLink.className = 'dropdown-item';
+                            subLink.href = '#';
+                            subLink.onclick = async () => {
+                                const query = `Tell me about ${sub.title}`;
+                                displayMessage(query, 'user');
+                                saveMessage(query, 'user');
+                                
+                                showTypingIndicator();
+                                try {
+                                    const controller = new AbortController();
+                                    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15-second timeout
+                                    const scrapeResponse = await fetch('/scrape_page', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ url: sub.url, session_id: sessionId }),
+                                        signal: controller.signal
+                                    });
+                                    clearTimeout(timeoutId);
+                                    const scrapeData = await scrapeResponse.json();
+                                    hideTypingIndicator();
+                                    displayMessage(scrapeData.response, 'bot');
+                                    saveMessage(scrapeData.response, 'bot');
+                                } catch (error) {
+                                    console.error('Error scraping page:', error);
+                                    hideTypingIndicator();
+                                    displayMessage('Sorry, I couldn’t fetch the content. Please try again.', 'bot');
+                                    saveMessage('Sorry, I couldn’t fetch the content. Please try again.', 'bot');
+                                }
+                            };
+                            dropdown.appendChild(subLink);
+                        });
+
+                        itemLink.onclick = () => {
+                            toggleDropdown(dropdown);
+                            itemLink.setAttribute('aria-expanded', dropdown.style.display === 'block');
+                            return false;
+                        };
+
+                        itemDiv.appendChild(itemLink);
+                        itemDiv.appendChild(dropdown);
+                    } else {
+                        itemLink.onclick = async () => {
+                            const query = `Tell me about ${item.title}`;
+                            displayMessage(query, 'user');
+                            saveMessage(query, 'user');
+                            
+                            showTypingIndicator();
+                            try {
+                                const controller = new AbortController();
+                                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15-second timeout
+                                const scrapeResponse = await fetch('/scrape_page', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ url: item.url, session_id: sessionId }),
+                                    signal: controller.signal
+                                });
+                                clearTimeout(timeoutId);
+                                const scrapeData = await scrapeResponse.json();
+                                hideTypingIndicator();
+                                displayMessage(scrapeData.response, 'bot');
+                                saveMessage(scrapeData.response, 'bot');
+                            } catch (error) {
+                                console.error('Error scraping page:', error);
+                                hideTypingIndicator();
+                                displayMessage('Sorry, I couldn’t fetch the content. Please try again.', 'bot');
+                                saveMessage('Sorry, I couldn’t fetch the content. Please try again.', 'bot');
+                            }
+                        };
+                        itemDiv.appendChild(itemLink);
+                    }
+
+                    chatBox.appendChild(itemDiv);
+                    saveMessage(item.title, 'bot');
+                });
+                
+                chatBox.scrollTop = chatBox.scrollHeight;
+            } catch (error) {
+                console.error('Error loading welcome message:', error);
+                hideTypingIndicator();
+                displayMessage('Sorry, I couldn’t load the welcome message.', 'bot');
+                saveMessage('Sorry, I couldn’t load the welcome message.', 'bot');
+            }
+        }
+
+        async function sendMessage() {
+            let message = userInput.value.trim();
+            if (!message) return;
+
+            displayMessage(message, 'user');
+            saveMessage(message, 'user');
+            userInput.value = '';
+
+            showTypingIndicator();
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15-second timeout
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, session_id: sessionId }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                const data = await response.json();
+                hideTypingIndicator();
+                displayMessage(data.response, 'bot');
+                saveMessage(data.response, 'bot');
+            } catch (error) {
+                console.error('Error:', error);
+                hideTypingIndicator();
+                displayMessage('Sorry, I couldn’t process your request. Please try again.', 'bot');
+                saveMessage('Sorry, I couldn’t process your request. Please try again.', 'bot');
+            }
+        }
+
+        async function sendQuickReply(message) {
+            displayMessage(message, 'user');
+            saveMessage(message, 'user');
+
+            showTypingIndicator();
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15-second timeout
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, session_id: sessionId }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                const data = await response.json();
+                hideTypingIndicator();
+                displayMessage(data.response, 'bot');
+                saveMessage(data.response, 'bot');
+            } catch (error) {
+                console.error('Error:', error);
+                hideTypingIndicator();
+                displayMessage('Sorry, I couldn’t process your request. Please try again.', 'bot');
+                saveMessage('Sorry, I couldn’t process your request. Please try again.', 'bot');
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        window.onload = () => {
+            loadChatHistory();
+            if (!(JSON.parse(localStorage.getItem('chatHistory')) || []).length) {
+                loadWelcomeMessage();
+            }
+        };
+    </script>
+</body>
+</html>
